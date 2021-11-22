@@ -1,0 +1,194 @@
+---
+title: "Station map"
+author: "Yoonjung Ahn"
+date: "9/23/2020"
+output: html_document
+---
+```{r}
+devtools::install_github('UrbanInstitute/urbnmapr')
+library(usmap)
+library(tmap)
+library(rgdal)
+library(sf)
+library(usmap)
+library(ggplot2)
+library(maps)
+library(dplyr)
+theme_set(theme_bw())
+library(tidyverse)
+library(urbnmapr)
+library(ggspatial)
+black.bold.italic.16.text <- element_text(face = "bold.italic", color = "black", size = 16)
+black.bold.italic.text <- element_text(face = "bold.italic", color = "black", size = 16)
+black.bold.italic.textsmall <- element_text(face = "bold.italic", color = "black", size = 13)
+library(fiftystater)
+library(RColorBrewer)
+library(dichromat)
+library(inlmisc)
+library(leaflet)
+library(tigris)
+library(dplyr)
+library(leaflet)
+library(sp)
+library(ggmap)
+library(maptools)
+library(broom)
+library(httr)
+library(maptools)
+library(ggplot2)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(ggspatial)
+#library(OpenStreetMap)
+library(osmdata)
+library(ggsn)
+library(raster)
+library(graphics)
+library(tidyverse)
+```
+
+```{r}
+setwd('/Users/yoonjung/FSU/2019/Research/Data/SolarRadiationData/observationWBGTdata/stationinfo/')
+```
+
+```{r}
+DF <-read.csv('./quailycontroldata.csv')
+unidf_qt <- unique(DF[ , c("lat", "lon","Institute")])
+
+mapdata_sf = st_as_sf(unidf_qt, coords = c("lon","lat"), 
+                 crs = 4326)#, agr = "constant")
+```
+
+
+```{r}
+
+mapdata  <-read.csv('./alllocwithST_regions_geo.csv')
+mapdata $ID <- seq(1:nrow(mapdata ))
+mapdata $ID <- as.character(mapdata$ID)
+mapdata <- dplyr::select(mapdata, -c(X,geometry,distnace.meter.,distnace.km.,koppen))
+
+colnames(mapdata) <-  c("NAME"," Regions",  "STATE", "Institute","lat","lon",
+                   "ridgevally", "aspect","elevation","slope","landcover",
+                   "distcat","koppenname","koppendiscrip","ID")
+
+mapdata<- mapdata %>%
+filter(lon <= 0 & lon >=-150)%>%
+  filter(lat > 20)%>%
+  filter(Institute != "")
+
+length(table(mapdata$Institute))
+
+mapdata2<- drop_na(mapdata)
+#mapdata3 <- SpatialPoints(coords = c("longitude", "latitude"), data = mapdata2)
+
+mapdata_sf = st_as_sf(mapdata2, coords = c("lat", "lon"), 
+                 crs = 4326)#, agr = "constant")
+```
+
+```{r}
+#US_sf  <- read_sf(dsn = "/Users/yoonjung/FSU/2019/Research/Data/locations/tl_2017_us_state/tl_2017_us_state.shp")
+#crs(US_sf)
+#US <- as.data.frame(urbnmapr::states)
+#US_sf <- st_as_sf(US, coords = c("long", "lat"))
+#st_crs(US_sf) = 4269
+#US_sf <- st_transform(US_sf, 4269)
+#crs(US_sf)
+#US.sp <- as(US_sf, "Spatial")
+f <- tempfile()
+download.file("http://www2.census.gov/geo/tiger/GENZ2010/gz_2010_us_050_00_20m.zip", destfile = f)
+unzip(f, exdir = ".")
+US_sf <- readShapePoly("gz_2010_us_050_00_20m.shp")
+US_sf <- US_sf[!(US_sf$STATE %in% c("02","15","72")),]
+#US_sf <- as_Spatial(US_sf)
+US_states <- unionSpatialPolygons(US_sf, IDs=US_sf$STATE)
+```
+
+#final!!!
+```{r}
+my_colors <-GetColors(17, blind = NULL)[1:17]
+
+p <-tm_shape(US_states) +
+  tm_borders(lwd=2, col = "gray", alpha = .5)+
+  tm_compass(type="4star", position=c("right", "bottom"), show.labels = 3,size = 2.5, fontsize = 0.5,
+    color.dark = "gray60", text.color = "gray60")+
+  tm_scale_bar(position=c("right", "bottom"), color.dark = "gray60")+
+  tm_shape(mapdata_sf) +
+  tm_dots(size = 0.1, col = "Institute", palette = my_colors, title = "Institutions",
+    popup.vars = TRUE)+
+  tm_layout(inner.margins = 0.2, legend.show = TRUE, legend.text.fontface = "bold.italic", fontface = "bold.italic", frame = FALSE) #,legend.outside = TRUE)
+p 
+tmap_save(p, "/Users/yoonjung/FSU/2019/Research/draft/WBGTproject/plots/stationmap.png", dpi = 150, width =20, height = 9, units = "cm")
+```
+
+#mapping reference 
+#https://medium.com/@urban_institute/how-to-create-state-and-county-maps-easily-in-r-577d29300bb2
+```{r}
+ggplot() + 
+  geom_polygon(data = urbnmapr::states, mapping = aes(x = long, y = lat, group = group),
+		           fill = 'grey', color = 'white') +
+  geom_point(data = mapdata, aes(x=lon, y=lat, color="BrBG"), size = 2.5)+
+  labs(color="Legend")+
+  scale_color_manual(values=c("BrBG"), labels=c("Stations"))+
+  labs(x ="Longitude", y = "Latitude")
+
+library(utils)
+data("fifty_states")
+ggplot() + geom_polygon( data=US_states, aes(x=long, y=lat),color="white", fill="grey10" )
+
+```
+
+#color
+## https://stat545.com/colors.html
+```{r}
+#my_colors <- append(colorschemes$Categorical.12,colorschemes$GreentoMagenta.16[11:16])
+#mycolors <- colorRampPalette(brewer.pal(17, "Set1"))(nb.cols)
+my_colors <-GetColors(17, blind = NULL)[1:17]
+
+p<- usmap::plot_usmap()+
+  annotation_scale(location = "br", width_hint = 0.5)+
+  geom_point(data = mapdata, aes(x=lon, y=lat, color = Institute),  size = 2, alpha = 0.8)+
+  labs(color="Legend")+
+  labs(x ="Latitude", y = "Longitude")+
+  annotation_scale(location = "br", width_hint = 0.5) +
+    annotation_north_arrow(location = "br", which_north = "true", 
+        pad_x = unit(0.75, "in"), pad_y = unit(0.2, "in"),
+        style = north_arrow_fancy_orienteering) +
+  theme_bw(base_size = 15)+ 
+  theme(axis.text =black.bold.italic.textsmall)+
+  theme(title = black.bold.italic.text, axis.title = black.bold.italic.text,legend.text=element_text(size=10))+
+    theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        axis.text = black.bold.italic.textsmall,
+        title = black.bold.italic.textsmall, 
+        axis.title = black.bold.italic.text)
+   #scale_color_manual(values=my_colors)
+
+p+  scale_color_manual(values = my_colors)
+#p +  scale_color_manual(values = getPlatte(17))
+
+ggsave("/Users/yoonjung/FSU/2019/Research/draft/WBGTproject/plots/stationmap.png", plot = last_plot(), dpi = 150,width = 30, height = 24, units = "cm")
+```
+
+```{r}
+g <- ggplot(data = US_sf$geometry) +
+    geom_sf() +
+    annotation_scale(location = "bl", width_hint = 0.5) +
+    annotation_north_arrow(location = "bl", which_north = "true", 
+        pad_x = unit(0.75, "in"), pad_y = unit(0.5, "in"),
+        style = north_arrow_fancy_orienteering) +
+    coord_sf(xlim = c(-88, -79), ylim = c(24.7, 31))
+
+g
+```
+
+#grave
+```{r}
+
+
+p<-ggplot() + 
+  geom_sf(data = US_sf) +
+  geom_sf(data = US_sf, fill = 'white', color = 'grey')+
+  #geom_polygon(data = urbnmapr::states, mapping = aes(x = long, y = lat, group = group),
+		           #fill = 'white', color = 'grey') +
+```
+

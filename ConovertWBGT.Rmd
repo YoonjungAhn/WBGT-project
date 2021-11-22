@@ -1,0 +1,84 @@
+---
+title: "convert to WBGT"
+author: "Yoonjung Ahn"
+date: "9/11/2020"
+output: html_document
+---
+```{r}
+#install.packages("remotes")
+#remotes::install_github("anacv/HeatStress")
+library(HeatStress)
+#citation(package = "HeatStress")
+library(dplyr)
+library(lubridate)
+library(tidyr)
+library(stringr)
+```
+
+```{r}
+setwd('/Users/yoonjung/FSU/2019/Research')
+```
+
+#individual test
+```{r}
+options(digits=9)
+unique(as.double(dat$lon, digits=9))
+dat <- read.csv('./Data/SolarRadiationData/NRCS_2018_2019_re/2028_2018_combined_forwbgt.csv')
+dat <- drop_na(dat)
+head(dat)
+dat <- dat%>%
+  drop_na()
+#as.numeric(as.character(test)) 
+#dat$Datetime<- as.POSIXct(dat$Datetime)
+#dat$UTC_Datetime<- as.POSIXct(dat$UTC_Datetime)
+
+#dat$lon<-as.numeric(as.character(dat$lon)) 
+#dat$lat<-as.numeric(as.character(dat$lat)) 
+#dat$airtemp<-as.numeric(as.character(dat$airtemp)) 
+#dat$rad.watt.m2..1<-as.numeric(as.character(dat$rad.watt.m2..1)) 
+#dat$dewtemp<-as.numeric(as.character(dat$dewtemp)) 
+
+WBGT <- wbgt.Liljegren(dat$airtemp, dat$Dewpoint, dat$wind, dat$rad.watt.m2., dat$UTC_Datetime, dat$lon[1], dat$lat[1], tolerance = 1e-04, noNAs = TRUE, swap = FALSE, hour = FALSE)
+
+WBGTdf <- as.data.frame(WBGT)
+merge_dat <-cbind(dat,WBGTdf)
+
+merge_dat<- dplyr::select(merge_dat, -c(X)) 
+merge_dat$institute <- "NRCS"
+merge_dat <- merge_dat[c("DateTime","UTC_Datetime", "lat", "lon", "airtemp","rad.watt.m2.","wind","dewtemp","data","Tnwb","Tg","institute")]
+colnames(merge_dat) <- c("DateTime", "UTC_Datetime", "lat", "lon", "airtemp", "rad.watt.m2.", "wind","dewpoint","wbgt","Tnwb","Tg","institute")
+
+head(merge_dat)
+```
+
+#loop 
+```{r}
+files <- list.files(path = "./Data/SolarRadiationData/NRCS_2018_2019_re", pattern = "forwbgt.csv", full.names = T)
+for (f in files){
+  #print(f)
+  dat <- read.csv(f)
+  #dat <- drop_na(dat)
+  dat$lon<- as.numeric(dat$lon)
+  dat$lat<- as.numeric(dat$lat)
+
+  WBGT <- wbgt.Liljegren(dat$airtemp, dat$Dewpoint, dat$wind, dat$rad.watt.m2., dat$UTC_Datetime, dat$lon[1], dat$lat[1], tolerance = 1e-04, noNAs = TRUE, swap = FALSE, hour = FALSE)
+
+  
+  WBGTdf <- as.data.frame(WBGT)
+  merge_dat <-cbind(dat,WBGTdf)
+  
+  merge_dat<- dplyr::select(merge_dat, -c(X)) 
+  merge_dat$institute <- "NRCS"
+  merge_dat <- merge_dat[c("Datetime","UTC_Datetime", "lat", "lon","airtemp","rad.watt.m2.","wind","Dewpoint","data","Tnwb","Tg","institute")]
+  colnames(merge_dat) <- c("DateTime", "UTC_Datetime", "lat", "lon", "airtemp", "rad.watt.m2.", "wind","dewpoint","wbgt","Tnwb","Tg","institute")
+
+
+  write.csv(merge_dat,paste(str_sub(f[1], end=-13),'_WBGT.csv',sep=""), row.names = FALSE)
+  #write.csv(merge_dat,f[1], row.names = FALSE)
+
+}
+  
+#write.csv(merge_dat,paste(str_sub(f[1], end=-12),'_WBGT.csv',sep=""), row.names = FALSE)
+#}
+
+```

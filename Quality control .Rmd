@@ -1,0 +1,103 @@
+---
+title: "data QC"
+author: "Yoonjung Ahn"
+date: "3/30/2021"
+output: html_document
+---
+
+```{r}
+#install.packages(file.choose(), repos = NULL, type="source")
+setwd('/Users/yoonjung/FSU/2019/Research/Data/SolarRadiationData/observationWBGTdata/stationinfo/')
+library(CrowdQC)
+library(tidyr)
+library(weathermetrics)
+library(data.table)
+library(dplyr)
+```
+
+```{r}
+df <-read.csv('./comebineNDFDandObservation.csv')
+unique(df$Institute)
+str(df)
+
+st <-read.csv('./alllocwithST_regions_geo.csv')
+
+#st%>% filter(STATE =='TN')
+st$ID <- seq(1:nrow(st))
+st$ID <- as.character(st$ID)
+st<- dplyr::select(st, -c(X,geometry,distnace.meter.,distnace.km.,koppen))
+#st <- drop_na(st)
+colnames(st) <-  c("Institute","lat","lon","ridgevally","aspect","elevation","slope","landcover","discat","NAME","STATE", "koppenname","name", "ID" )
+
+landcover <- read.csv('/Users/yoonjung/FSU/2019/Research/Data/locations/Landuse/conus_attributes_16dec2016.csv')
+landcover <- rename(landcover,landcover=CL)
+landcover <- subset(landcover, select = -c(Description) )
+
+st <- merge(st, landcover, by = c("landcover"), by.y = c("landcover"), all.x=FALSE)
+#st$landcover<- st$landcover %>%replace_na("unknown")
+
+st$distcat <- as.character(st$discat)
+st$lat <-as.numeric(st$lat)
+st$lon <-as.numeric(st$lon)
+
+#merge Data and station info
+DFmerge <- merge(df, st, by = c("lat","lon","Institute"), by.y = c("lat","lon","Institute"), all.x=TRUE)
+#DFmerge <- DFmerge %>% drop_na()
+DFmerge$ndfd_C <-fahrenheit.to.celsius(DFmerge$WBGT_NDFD, round = 2)
+DFmerge$wbgt_C <-fahrenheit.to.celsius(DFmerge$wbgt, round = 2)
+DFmerge$UTC_Datetime <- strftime(as.POSIXlt(DFmerge$UTC_Datetime, format = "%Y-%m-%d %H:%M:%S"))
+DFmerge <- DFmerge %>% drop_na()
+
+str(DFmerge)
+#DFselect$UTC_Date  <- strftime(as.POSIXct(DFselect$UTC_Datetime, format = "%Y-%m-%d"))
+#DFselect$hour <- strftime(DFselect$UTC_Datetime, "%H")
+
+```
+#Quality control
+#datetime data conver in data.table : https://stackoverflow.com/questions/21487614/error-creating-r-data-table-with-date-time-posixlt
+```{r}
+#test <- drop_na(test)
+DFselect <- DFmerge%>% dplyr::select(ID, lat,lon, wbgt_C, UTC_Datetime)
+DFselect$hour <-as.ITime(DFselect$UTC_Datetime, format = "%Y-%m-%d %H:%M:%S")
+DFselect$UTC_Date  <- strftime(as.POSIXct(DFselect$UTC_Datetime, format = "%Y-%m-%d"))
+
+colnames(DFselect) <- c("p_id","lat",'lon',"ta","UTC_Datetime","hour","UTC_Date")
+DFselect <- DFselect %>% dplyr::select(p_id, lat,lon, ta, UTC_Date, hour)
+setDT(DFselect) 
+DFselect$time <- as.POSIXct(DFselect$UTC_Date) + as.ITime(DFselect$hour)
+DFselect <- DFselect %>% dplyr::select(p_id, lat,lon, ta, time)
+
+str(DFselect)
+
+#nrow(subset(DFselect, p_id== 497))
+QCselect <- m1(DFselect,  cutOff = 1)
+QCselect2 <-m2(QCselect, low = 0.05, high = 0.95)
+QCselect3 <-m3(QCselect2)
+#QCselect4 <-m4(QCselect3)
+#QCselect5 <- m4(QCselect4, cutOff = 0.9)
+
+flagdf <- QCselect3%>% dplyr::filter(m3==FALSE)
+hist(flagdf$ta)
+
+noflag<- QCselect3%>% dplyr::filter(m3==TRUE)
+test <- noflag%>%dplyr::filter(noflag$ta< -10)
+```
+#merge with original data
+```{r}
+DFmerge$time<- as.POSIXlt(DFmerge$UTC_Datetime, format = "%Y-%m-%d %H:%M:%S")
+
+QCdf <-subset(QCselect3, m3== TRUE) %>%
+  dplyr::select(p_id, lat,lon, ta, time, m3)
+
+
+resultdf <- merge(DFmerge, QCdf, by.x = c("ID","lat","lon","time"), by.y = c("p_id","lat","lon","time"), all.y = T)
+#test <- resultdf%>%dplyr::filter(resultdf$wbgt_C< -10)
+
+result <- resultdf %>% distinct(ID, UTC_Datetime, lat,lon, NVC_CLASS, landcover,  koppenname, .keep_all= TRUE)%>%
+  dplyr::select(ID, UTC_Datetime, lat,lon, Institute, STATE, ridgevally, NVC_CLASS, landcover, aspect, distcat, elevation, koppenname ,ndfd_C,wbgt_C)
+
+
+write.table(result , file = "/Users/yoonjung/FSU/2019/Research/Data/SolarRadiationData/observationWBGTdata/stationinfo/quailycontroldata.csv", sep = ",", quote = FALSE, row.names = F)
+```
+
+

@@ -1,0 +1,196 @@
+---
+title: "NDFD"
+author: "Yoonjung Ahn"
+date: "9/20/2020"
+output: html_document
+---
+#https://pravashtiwarigeop.wixsite.com/weathercode/post/netcdf-data-to-text-or-comma-seperated-variable-csv-in-r-easy-and-quick?fbclid=IwAR2tDp_qrF7Z3v4LSPbVgjm6i2ll6Z0H2gZ1s5IlRrFBeKX569RNTwVDWoY
+```{r}
+setwd('/Users/yoonjung/FSU/2019/Research/Data/SolarRadiationData/')
+```
+
+```{r}
+library(chron)
+library(RColorBrewer)
+library(lattice)
+#library(ncdf.tools)
+library(ncdf4)
+library(RNetCDF)
+```
+
+## example 
+https://www.researchgate.net/post/Extracting_data_from_a_netCDF_file
+```{r}
+library(chron)
+library(RColorBrewer)
+library(lattice)
+#library(ncdf.tools)
+library(ncdf4)
+library(RNetCDF)
+setwd("~/ACCESS1-3")
+ncin <- nc_open("pr_day_ACCESS1-3_historical_r1i1p1_19750101-19991231.nc")
+ncin
+lat <- ncvar_get(ncin, "lat")
+lon <- ncvar_get(ncin, "lon")
+time <- ncvar_get(ncin, "time")
+tunits <- ncatt_get(ncin, "time", "units")
+institution <- ncatt_get(ncin, 0, "institution")
+datasource <- ncatt_get(ncin, 0, "source")
+references <- ncatt_get(ncin, 0, "references")
+history <- ncatt_get(ncin, 0, "history")
+conventions <- ncatt_get(ncin, 0, "conventions")
+tustr <- strsplit(tunits$value, " ")
+tdstr <- strsplit(unlist(tustr) [3], "-")
+tmonth=as.integer(unlist(tdstr)[2])
+tday=as.integer(unlist(tdstr)[3])
+tyear=as.integer(unlist(tdstr)[1])
+tnew <<- chron(time, origin=c(tmonth, tday, tyear))
+pr.array <- ncvar_get(ncin, "pr")
+which.min(abs (lat- 54.82))
+#[1] 117
+which.min(abs (lon- 69.12))
+#[1] 38
+pr.slice <- pr.array[38, 117, ]
+View(pr.slice)
+write.csv(pr.slice, file="ACCESS1_3_daily_1975_1999.csv")
+
+```
+
+```{r}
+#extract value to point individual point
+ncin <- nc_open("./NDFD/wbgt_2018-04/wbgt_2018-04-01_0200.nc")
+ncin
+lat <- ncvar_get(ncin, "latitude")
+lon <- ncvar_get(ncin, "longitude")
+wbgt<- ncvar_get(ncin, "wbgt")
+
+pr.array <- ncvar_get(ncin, "wbgt")
+LAT <- which.min(abs (lat- 42.56))
+LON <- which.min(abs (lon- -93.48))
+pr.slice <- pr.array[LON,LAT]
+pr.slice
+```
+
+```{r}
+#station locations
+st<-read.csv("./observationWBGTdata/stationinfo/allstation.csv", stringsAsFactors=FALSE)
+
+st<- st %>%
+filter(lon <= 0 & lon >=-150)%>%
+  filter(lat > 20)%>%
+  filter(institute != "")
+st <- drop_na(st)
+head(st)
+```
+
+```{r}
+#read in NDFD data and extract date time info from file name
+files <- list.files(path = "NDFD/wbgt_2018-04", pattern = ".nc", full.names = T)
+
+date <- substr(files[1], 24, 33)
+time <- substr(files[1], 35, 38)
+DATE <- paste(date,time,sep=' ')
+
+#creating an empty dataframe
+df <- data.frame(matrix(ncol = 5, nrow = 10))
+colnames(df)<-c('UTC_Datetime','lat','lon','wbgt','institute')
+df$UTC_datetime <- strftime(as.POSIXct(DATE, format = "%Y-%m-%d %H%M"))
+
+
+for(i in 1:nrow(st)){
+ Lat =st[i,1] #getting station location lat 
+ Lon =st[i,2] #getting station location lon
+ df[i,2] <- Lat
+ df[i,3] <- Lon
+ df[i,5] <- st[i,3] #adding institute info 
+ 
+ pr.array <- ncvar_get(ncin, "wbgt")
+ LAT <- which.min(abs (lat- Lat)) #extract point to station info
+ LON <- which.min(abs (lon- Lon)) #extract point to station info
+ df[i,4] <- pr.array[LON,LAT]
+ write.csv(df, file=paste(substr(files[1], 1, 38), '.csv',sep=''))
+
+}
+```
+
+#make a for loop
+```{r}
+
+files <- list.files(path = "NDFD/wbgt_2018-04", pattern = ".nc", full.names = T)
+
+
+for (f in files) {
+  ncin <- nc_open(f)
+  lat <- ncvar_get(ncin, "latitude")
+  lon <- ncvar_get(ncin, "longitude")
+  wbgt<- ncvar_get(ncin, "wbgt")
+  
+  date <- substr(f, 24, 33)
+  time <- substr(f, 35, 38)
+  DATE <- paste(date,time,sep=' ')
+  
+  #creating an empty dataframe
+  df <- data.frame(matrix(ncol = 5, nrow = nrow(st)))
+  colnames(df)<-c('UTC_Datetime','lat','lon','wbgt','institute')
+  df$UTC_Datetime <- strftime(as.POSIXct(DATE, format = "%Y-%m-%d %H%M"))
+  
+  for(i in 1:nrow(st)){
+    Lat =st[i,1] #getting station location lat 
+    Lon =st[i,2] #getting station location lon
+    df[i,2] <- Lat
+    df[i,3] <- Lon
+    df[i,5] <- st[i,3] #adding institute info 
+ 
+    pr.array <- ncvar_get(ncin, "wbgt")
+    LAT <- which.min(abs (lat- Lat)) #extract point to station info
+    LON <- which.min(abs (lon- Lon)) #extract point to station info
+    df[i,4] <- pr.array[LON,LAT]
+    write.csv(df, file=paste(substr(f, 1, 38), '.csv',sep=''))  
+  
+  }
+  
+}
+```
+
+```{r}
+
+months =c("08","09","10")
+for (f in months){
+  files <- list.files(path = paste("NDFD/wbgt_2019-",months,sep=""), pattern = ".nc", full.names = T)
+  for (f in files) {
+  ncin <- nc_open(f)
+  lat <- ncvar_get(ncin, "latitude")
+  lon <- ncvar_get(ncin, "longitude")
+  wbgt<- ncvar_get(ncin, "wbgt")
+  
+  date <- substr(f, 24, 33)
+  time <- substr(f, 35, 38)
+  DATE <- paste(date,time,sep=' ')
+  
+  #creating an empty dataframe
+  df <- data.frame(matrix(ncol = 5, nrow = nrow(st)))
+  colnames(df)<-c('UTC_Datetime','lat','lon','wbgt','institute')
+  df$UTC_Datetime <- strftime(as.POSIXct(DATE, format = "%Y-%m-%d %H%M"))
+  
+  for(i in 1:nrow(st)){
+    Lat =st[i,1] #getting station location lat 
+    Lon =st[i,2] #getting station location lon
+    df[i,2] <- Lat
+    df[i,3] <- Lon
+    df[i,5] <- st[i,3] #adding institute info 
+ 
+    pr.array <- ncvar_get(ncin, "wbgt")
+    LAT <- which.min(abs (lat- Lat)) #extract point to station info
+    LON <- which.min(abs (lon- Lon)) #extract point to station info
+    df[i,4] <- pr.array[LON,LAT]
+    write.csv(df, file=paste(substr(f, 1, 38), '.csv',sep=''))  
+  
+  }
+  
+}
+  
+}
+
+
+```
+

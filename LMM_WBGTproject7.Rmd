@@ -1,0 +1,460 @@
+---
+title: "LMM_WBGTproject7"
+author: "Yoonjung Ahn"
+date: "1/4/2021"
+---
+```{r}
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(lme4)
+library(nlme)
+library(tibble)
+library(AICcmodavg)
+library(weathermetrics)
+library(boot)
+theme_set(theme_bw())
+library(splines)
+library(broom)
+library(broom.mixed)
+library(ie2misc)
+
+black.bold.italic.16.text <- element_text(face = "bold.italic", color = "black", size = 16)
+black.bold.italic.text <- element_text(face = "bold.italic", color = "black", size = 16)
+black.bold.italic.textsmall <- element_text(face = "bold.italic", color = "black", size = 13)
+
+setwd('/Users/yoonjung/FSU/2019/Research/Data/SolarRadiationData/observationWBGTdata/stationinfo/')
+```
+#compare with QC data and original data
+```{r}
+df$UTC_Datetime <- strftime(as.POSIXlt(df$UTC_Datetime, format = "%Y-%m-%d %H:%M:%S"))
+#DFselect$UTC_Date  <- strftime(as.POSIXct(DFselect$UTC_Datetime, format = "%Y-%m-%d"))
+df$year <- strftime(df$UTC_Datetime, "%Y")
+DFmerge$year <- strftime(DFmerge$UTC_Datetime, "%Y")
+df$month <- strftime(df$UTC_Datetime, "%m")
+DFmerge$month <- strftime(DFmerge$UTC_Datetime, "%m")
+
+unidf_origin <- unique(df[ , c("lat", "lon","year", "month")])
+unidf_qt <- unique(DFmerge[ , c("lat", "lon","year", "month")])
+test <- anti_join(unidf_origin, unidf_qt, by = c("lat" = "lat", "lon" = "lon", "year"="year","month"="month"))
+df$is_match = unidf_origin %in% unidf_qt
+diffdf::diffdf()
+
+
+Test <- test %>% group_by(year,month)%>%
+  summarise(num =n())
+Test$rmovenum <- 623 -Test$num
+
+unidf_qt <- unique(DF[ , c("ID","koppenname","koppencat")])
+Test <- unidf_qt  %>% group_by(koppenname,koppencat)%>%
+  summarise(num =n())
+```
+
+#merge station info and Data
+```{r}
+
+df <-read.csv('comebineNDFDandObservation_V2.csv')
+unique(df$Institute)
+str(df)
+
+st <-read.csv('./alllocwithST_regions_geo.csv')
+st$ID <- seq(1:nrow(st))
+st$ID <- as.character(st$ID)
+st<- dplyr::select(st, -c(X,geometry,distnace.meter.,distnace.km.,koppen))
+#st <- drop_na(st)
+colnames(st) <-  c("Institute","lat","lon","ridgevally","aspect","elevation","slope","landcover","discat","NAME","STATE", "koppenname","name", "ID" )
+
+landcover <- read.csv('/Users/yoonjung/FSU/2019/Research/Data/locations/Landuse/conus_attributes_16dec2016.csv')
+landcover <- rename(landcover,landcover=CL)
+landcover <- subset(landcover, select = -c(Description) )
+
+st <- merge(st, landcover, by = c("landcover"), by.y = c("landcover"), all.x=FALSE)
+#st$landcover<- st$landcover %>%replace_na("unknown")
+
+st$distcat <- as.character(st$discat)
+st$lat <-as.numeric(st$lat)
+st$lon <-as.numeric(st$lon)
+
+#merge Data and station info
+DFmerge <- df
+#DFmerge <- merge(df, st, by = c("lat","lon","Institute"), by.y = c("lat","lon","Institute"), all.x=TRUE)
+#DFmerge <- DFmerge %>% drop_na()
+#DFmerge$ndfd_C <-fahrenheit.to.celsius(DFmerge$WBGT_NDFD, round = 2)
+#DFmerge$wbgt_C <-fahrenheit.to.celsius(DFmerge$wbgt, round = 2)
+
+DFmerge$aspect <- as.numeric(DFmerge$aspect)
+DFmerge$aspectcat[(0 >DFmerge$aspect)] <- "Flat"
+DFmerge$aspectcat[0 <= DFmerge$aspect & DFmerge$aspect<= 22.5] <- "North"
+DFmerge$aspectcat[22.6 <= DFmerge$aspect & DFmerge$aspect<= 67.5] <- "Northeast"
+DFmerge$aspectcat[DFmerge$aspect>=67.6 & DFmerge$aspect<= 112.5] <- "East"
+DFmerge$aspectcat[(112.6 <= DFmerge$aspect) & (DFmerge$aspect <= 157.5)] <- "Southeast"
+DFmerge$aspectcat[(157.6 <= DFmerge$aspect) & (DFmerge$aspect <= 202.5)] <- "South"
+DFmerge$aspectcat[(202.6 <= DFmerge$aspect) & (DFmerge$aspect <= 247.5)] <- "Southwest"
+DFmerge$aspectcat[(247.6 <= DFmerge$aspect) & (DFmerge$aspect <= 292.5)] <- "West"
+DFmerge$aspectcat[(292.6 <= DFmerge$aspect) & (DFmerge$aspect <= 337.5)] <- "Northwest"
+DFmerge$aspectcat[(337.6 <= DFmerge$aspect) ] <- "North"
+unique(DFmerge$aspectcat)
+
+DFselect <- DFmerge[!(DFmerge$STATE == "CO" & DFmerge$wbgt_C < -20)&!(DFmerge$STATE == "TX" & DFmerge$wbgt_C < -20)&!(DFmerge$STATE == "AL" & DFmerge$wbgt_C < -20)&!(DFmerge$STATE == "MS" & DFmerge$wbgt_C < -20)&!(DFmerge$koppenname == "Cfa" & DFmerge$wbgt_C < -20),] 
+
+DFselect$UTC_Datetime <- strftime(as.POSIXlt(DFselect$UTC_Datetime, format = "%Y-%m-%d %H:%M:%S"))
+#DFselect$UTC_Date  <- strftime(as.POSIXct(DFselect$UTC_Datetime, format = "%Y-%m-%d"))
+DFselect$hour <- strftime(DFselect$UTC_Datetime, "%H")
+DFselect$month <- strftime(DFselect$UTC_Datetime, "%m")
+
+DFselect$ridgevallycat <- ifelse(DFselect$ridgevally>=0, 1, 0) #ridge =1, vally=0
+DFselect$ridgevallycat <- as.character(DFselect$ridgevallycat)
+
+DF<- DFselect %>% dplyr::select(ID, lat,lon, Institute, STATE, NVC_CLASS, landcover, aspectcat, ridgevallycat, distcat, elevation, koppenname ,ndfd_C,wbgt_C,hour, month)
+
+DF <-subset(DF, ID!= 249) 
+DF<-subset(DF,wbgt_C<55)
+DF<-drop_na(DF)
+
+DF$diff <- DF$ndfd_C - DF$wbgt_C
+DF$diffab <- abs(DF$diff)
+
+DF <- DF[!(DF$hour == "01")&!(DF$hour == "02")&!(DF$hour == "03")&!(DF$hour == "04")&!(DF$hour == "22")&!(DF$hour == "23")&!(DF$hour == "00"),] 
+
+#DF$koppencat[(DF$koppenname == "Af")|(DF$koppenname == "Am")|(DF$koppenname == "Aw")] <- "Af Am Aw"
+#DF$koppencat[(DF$koppenname == "BSh")|(DF$koppenname == "BSk")] <- "BSh BSk"
+#DF$koppencat[(DF$koppenname == "BWh")|(DF$koppenname == "BWk")] <- "BWh BWk"
+#DF$koppencat[(DF$koppenname == "Cfa")|(DF$koppenname == "Cfb")|(DF$koppenname == "Csa")|(DF$koppenname == "Csb")] <- "Cfa Cfb Csa Csb"
+#DF$koppencat[(DF$koppenname == "Dfa")|(DF$koppenname == "Dfb")|(DF$koppenname == "Dfc")] <- "Dfa Dfb Dfc"
+#DF$koppencat[(DF$koppenname == "Dsa")|(DF$koppenname == "Dsb")|(DF$koppenname == "Dwa")|(DF$koppenname == "Dwb")] <- "Dsa Dsb Dwa Dwb"
+
+#DF <-DF[!(DF$ID == "670")&!(DF$ID == "852")&!(DF$ID == "844")&!(DF$ID == "680"),] 
+
+```
+
+```{r}
+DFmerge <-read.csv('./quailycontroldata.csv')
+DFmerge$ndfd_C <- as.numeric(DFmerge$ndfd_C)
+DFmerge$aspect <- as.numeric(DFmerge$aspect)
+DFmerge$aspectcat[(0 >DFmerge$aspect)] <- "Flat"
+DFmerge$aspectcat[0 <= DFmerge$aspect & DFmerge$aspect<= 22.5] <- "North"
+DFmerge$aspectcat[22.6 <= DFmerge$aspect & DFmerge$aspect<= 67.5] <- "Northeast"
+DFmerge$aspectcat[DFmerge$aspect>=67.6 & DFmerge$aspect<= 112.5] <- "East"
+DFmerge$aspectcat[(112.6 <= DFmerge$aspect) & (DFmerge$aspect <= 157.5)] <- "Southeast"
+DFmerge$aspectcat[(157.6 <= DFmerge$aspect) & (DFmerge$aspect <= 202.5)] <- "South"
+DFmerge$aspectcat[(202.6 <= DFmerge$aspect) & (DFmerge$aspect <= 247.5)] <- "Southwest"
+DFmerge$aspectcat[(247.6 <= DFmerge$aspect) & (DFmerge$aspect <= 292.5)] <- "West"
+DFmerge$aspectcat[(292.6 <= DFmerge$aspect) & (DFmerge$aspect <= 337.5)] <- "Northwest"
+DFmerge$aspectcat[(337.6 <= DFmerge$aspect) ] <- "North"
+unique(DFmerge$aspectcat)
+
+#ridge =1, vally=0
+DFmerge$ridgevallycat <- ifelse(DFmerge$ridgevally>=0, 1, 0)
+DFmerge$ridgevallycat <- as.character(DFmerge$ridgevallycat)
+
+DFmerge$UTC_Datetime <- strftime(as.POSIXlt(DFmerge$UTC_Datetime, format = "%Y-%m-%d %H:%M:%S"))
+#DFselect$UTC_Date  <- strftime(as.POSIXct(DFselect$UTC_Datetime, format = "%Y-%m-%d"))
+DFmerge$hour <- strftime(DFmerge$UTC_Datetime, "%H")
+DFmerge$month <- strftime(DFmerge$UTC_Datetime, "%m")
+
+DFmerge <- DFmerge[!(DFmerge$STATE == "CO" & DFmerge$wbgt_C < -20)&!(DFmerge$STATE == "TX" & DFmerge$wbgt_C < -20)&!(DFmerge$STATE == "AL" & DFmerge$wbgt_C < -20)&!(DFmerge$STATE == "MS" & DFmerge$wbgt_C < -20)&!(DFmerge$koppenname == "Cfa" & DFmerge$wbgt_C < -20),] 
+DFmerge <- drop_na(DFmerge)
+DF<-drop_na(DFmerge)
+#DF <-subset(DF, ID!= 249) 
+DF<-subset(DF,wbgt_C>-20)
+subset(DFmerge,wbgt_C==-19)
+
+DF$diff <- DF$ndfd_C - DF$wbgt_C
+DF$diffab <- abs(DF$diff)
+
+DF <- DF[!(DF$hour == "01")&!(DF$hour == "02")&!(DF$hour == "03")&!(DF$hour == "04")&!(DF$hour == "22")&!(DF$hour == "23")&!(DF$hour == "00"),] 
+
+DF$koppencat[(DF$koppenname == "Af")|(DF$koppenname == "Am")|(DF$koppenname == "Aw")] <- "Af Am Aw"
+DF$koppencat[(DF$koppenname == "BSh")|(DF$koppenname == "BSk")] <- "BSh BSk"
+DF$koppencat[(DF$koppenname == "BWh")|(DF$koppenname == "BWk")] <- "BWh BWk"
+DF$koppencat[(DF$koppenname == "Cfa")|(DF$koppenname == "Cfb")|(DF$koppenname == "Csa")|(DF$koppenname == "Csb")] <- "Cfa Cfb Csa Csb"
+DF$koppencat[(DF$koppenname == "Dfa")|(DF$koppenname == "Dfb")|(DF$koppenname == "Dfc")] <- "Dfa Dfb Dfc"
+DF$koppencat[(DF$koppenname == "Dsa")|(DF$koppenname == "Dsb")|(DF$koppenname == "Dwa")|(DF$koppenname == "Dwb")] <- "Dsa Dsb Dwa Dwb"
+
+#land use
+DF$NVC_CLASS[(DF$NVC_CLASS == "Pasture/hay")|(DF$NVC_CLASS == "Grassland/herbaceous")] <- "Herbaceous"
+
+DF$NVC_CLASS[(DF$NVC_CLASS == "Woody wetlands")|(DF$NVC_CLASS == "Emergent herbaceous wetlands")] <- "Wetlands"
+min(DF$wbgt_C)
+
+```
+
+#data summary
+```{r}
+region <- read.csv('/Users/yoonjung/FSU/2019/Research/Data/SolarRadiationData/regionsbystate.csv')
+colnames(region) <- c("State","STATE","Region","Division")
+sumdf <- inner_join(region,DF,"STATE")
+Sumdf <- sumdf %>% select(c("STATE","Region","ID"))
+Sumdf <- Sumdf[!duplicated(Sumdf),]
+
+Sumdf%>%group_by(Region, STATE)%>%
+  summarise(count=n())
+nrow(Sumdf)
+length(unique(Sumdf$STATE))
+```
+
+
+```{r}
+#ariddf <- subset(DF, koppencat== "BWh BWk")
+#test <- subset(ariddf,diffab>20)
+#test2 <- test[!duplicated(test$ID), ]
+#DF$aridcat <- ifelse(DF$NVC_CLASS>="BWh BWk", 1, 0)
+#DF$aridcat <- as.numeric(DF$aridcat)
+#DF$aridcat <- as.character(DF$aridcat)
+
+#marid <- glm(diffab ~ elevation+aspectcat+NVC_CLASS*bs(month)+aridcat+bs(hour,df=3), data = DF)
+#marid <- glm(diffab ~ elevation+aspectcat+NVC_CLASS*aridcat+bs(hour,df=3)+month, data = DF)
+
+#final model
+#marid1 <- glm(diffab ~ elevation+aspectcat+NVC_CLASS+aridcat+bs(hour,df=3)+month, data = DF)
+
+#summary(marid)
+#anova(marid1, marid) #, test="Chisq")
+```
+
+#model
+```{r}
+
+#m2 <- lmer(diffab ~ elevation+aspectcat+distcat+NVC_CLASS+bs(hour,df=3)+month+(1|koppencat), data = DF)
+#anova(marid,m2)
+#m <- lmer(diffab ~ elevation+ridgevallycat+aspectcat+distcat+NVC_CLASS+bs(hour,df=3)+month+(1|koppencat), data = DFno)
+
+DFno <- DF%>%drop_na()
+minter <- lmer(diffab ~ elevation+ridgevallycat+aspectcat+distcat+NVC_CLASS*bs(as.numeric(month))+bs(hour,df=3)+(1|koppencat), data = DFno)
+
+#predict 
+DFno$estimated_diff <- predict(minter, data = DFno)
+
+#test
+anova(m, minter, test="chisq")
+#tidy(m,conf.int=TRUE)
+DFno$y <- predict(m, data = DFno)
+
+#mean squre error 
+mae(DFno$diffab, DFno$y)
+
+#null model
+m0 <- lmer(diffab ~ 1 +(1|koppencat), data = DFno)
+DFno$ynull <- predict(m0, data = DFno)
+mae(DFno$diffab, DFno$ynull)
+
+anova(m0,  minter, test="chisq")
+AIC(m0,  minter)
+library(MuMIn)
+tidy(m,conf.int=TRUE)
+options(na.action = "na.fail")
+out.put<-model.sel(m,m0) 
+
+#save fix and ran effect 
+fixedeff <- tidy(minter, effects = "fixed",conf.int=TRUE)
+fixedeff<- as.data.frame(fixedeff)
+fixedeff$term <- str_replace(fixedeff$term,"hour,","hour")
+
+randomef<- tidy(minter, effects = "ran_vals",conf.int=TRUE, conf.method="Wald", scales ="sd-cor" )
+randomef<- as.data.frame(randomef)
+
+write.csv(fixedeff, file = "./FINAL_Fixedffect_confint_final_V2.csv", sep = ",", quote = FALSE, row.names = F)
+write.csv(randomef, file = "./FINAL_Randomeffect_confint_final_V2.csv", sep = ",", quote = FALSE, row.names = F)
+#write.table(coefdf, file = "./FINAL_coefff_V2.txt", sep = ",", quote = FALSE, row.names = F)
+```
+
+#reading in saved results 
+```{r}
+finalranef  <- read.csv("./FINAL_Randomeffect_confint_final_V2.csv")
+#cn = colnames(finalranef)[ncol(finalranef)]
+#finalranef  <- finalranef %>%
+#    separate_(col = cn, into = strsplit(cn, ',')[[1]],  sep = ',') 
+finalranef <- data.frame(finalranef)
+finalranef$conf.high<- as.numeric(finalranef$conf.high)
+finalranef$conf.low <-as.numeric(finalranef$conf.low)
+
+finalfixed <- read.csv("./FINAL_Fixedffect_confint_final_V2.csv")
+#cn = colnames(finalfixed )[ncol(finalfixed )]
+#finalfixed  <- finalfixed  %>%
+#    separate_(col = cn, into = strsplit(cn, ',')[[1]],  sep = ',') 
+finalfixed  <- data.frame(finalfixed)
+finalfixed $conf.high<- as.numeric(finalfixed$conf.high)
+finalfixed $conf.low <-as.numeric(finalfixed$conf.low)
+
+
+```
+
+#random effect 95% interval plot
+```{r}
+library(ggplot2)
+library(RColorBrewer)
+
+nb.cols <- length(finalranef$term)
+#mycolors <- colorRampPalette(brewer.pal(8, "Set1"))(nb.cols)
+mycolors <- colorRampPalette(brewer.pal(8, "YlGnBu"))(nb.cols)
+
+order(finalranef$term, decreasing = T)
+finalranef$koppencat <- c('Tropical','Arid steppe','Arid desert','Temperate','Cold and no dry season','Cold and dry')
+
+p<- ggplot(finalranef,aes(koppencat, as.numeric(estimate))) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high))+ 
+  geom_point(stat='identity', size=12, aes(col=koppencat))+
+  geom_hline(yintercept=0, linetype="dashed", color = "gray")+
+  xlab("Koppen Climate division categories") + 
+  ylab("Random effect coefficient")+
+  scale_x_discrete(limits = rev(levels(as.factor(finalranef$koppencat))))+
+  coord_flip()+
+  geom_text(label = round(as.numeric(finalranef$estimate),2), color = "black", size=4,aes(fontface = "bold.italic"))
+p +  theme_bw(base_size = 15)+ 
+  theme(axis.text =black.bold.italic.textsmall)+
+  theme(title = black.bold.italic.text, axis.title = black.bold.italic.text,legend.text=element_text(size=10))+
+    theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        axis.text = black.bold.italic.textsmall,
+        title = black.bold.italic.textsmall, 
+        axis.title = black.bold.italic.text)+
+  scale_color_manual(name = "Koppen climdate categories", label = c('Arid desert:BW,BWk','Arid steppe:BSh,BSk','Cold and dry:Dsa,Dsb,Dwa,Dwb','Cold and no dry season:Dfa,Dfb,Dfc','Temperate:Cfa,Cfb,Csa,Csb','Tropical:Af,Am,Aw'), values = mycolors)
+ggsave("/Users/yoonjung/FSU/2019/Research/draft/WBGTproject/plots/randomeffectintercept.png", plot = last_plot(), dpi = 150,width = 30, height = 25, units = "cm")
+```
+
+##total coef effects interval 
+https://mran.microsoft.com/snapshot/2017-04-22/web/packages/sjPlot/vignettes/sjplmer.html
+```{r}
+finalfixed <- read_table("./FINAL_Fixedffect_confint_final_V2.txt")
+#cn = colnames(finalfixed )[ncol(finalfixed )]
+#finalfixed  <- finalfixed  %>%
+#    separate_(col = cn, into = strsplit(cn, ',')[[1]],  sep = ',') 
+finalfixed  <- data.frame(finalfixed )
+finalfixed $conf.high<- as.numeric(finalfixed$conf.high)
+finalfixed $conf.low <-as.numeric(finalfixed$conf.low)
+ 
+finalfixed$term <- c("Intercept","Elevation","Ridge","Aspect North","Aspect Northest","Aspect Northwest","Aspect South","Aspect Southest","Aspect Southwest","Aspect West","Coastal proximity(within 5Km)","Landuse:Cultivated crops","Landuse:Deciduous forest","Landuse:Developed high intensity","Landuse:Evergreen forest","Landuse:Herbaceous","Landuse:Mixed forest","Landuse:Open water","Landuse:Shrub/scrub","Landuse:Wetlands","bs(as.numeric(month))1","bs(as.numeric(month))2","bs(as.numeric(month))3","Hour df=1","Hour df=2","Hour df=3","Landuse df1:Cultivated crops","Landuse df1:Deciduous forest","Landuse df1:Developed high intensity","Landuse df1:Evergreen forest","Landuse df1:Herbaceous","Landuse df1:Mixed forest","Landuse df1:Open water","Landuse df1:Shrub/scrub","Landuse df1:Wetlands","Landuse df2:Cultivated crops","Landuse df2:Deciduous forest","Landuse df2:Developed high intensity","Landuse df2:Evergreen forest","Landuse df2:Herbaceous","Landuse df2:Mixed forest","Landuse df2:Open water","Landuse df2:Shrub/scrub","Landuse df2:Wetlands","Landuse df3:Cultivated crops","Landuse df3:Deciduous forest","Landuse df3:Developed high intensity","Landuse df3:Evergreen forest","Landuse df3:Herbaceous","Landuse df3:Mixed forest","Landuse df3:Open water","Landuse df3:Shrub/scrub","Landuse df3:Wetlands")
+
+subdf <-subset(finalfixed, term!="Hour df=1" & term!="Hour df=2"  & term!="Hour df=3"& term!="bs(as.numeric(month))1"& term!="bs(as.numeric(month))2"& term!="bs(as.numeric(month))3")
+
+subdf1 <- subdf[c(1:20),]
+
+ggplot(subdf1,aes(term, as.numeric(estimate))) + 
+  geom_point(stat='identity', size=10, position=position_dodge(width=2))+
+  geom_hline(yintercept=0, linetype="dashed", color = "gray")+
+  geom_errorbar(aes(ymin = as.numeric(conf.low), ymax = as.numeric(conf.high)))+ 
+  xlab("Variables") + 
+  ylab("Coefficient")+
+  scale_x_discrete(limits = rev(levels(as.factor(subdf1$term))))+
+  coord_flip()+
+  geom_text(label = round(as.numeric(subdf1$estimate),2),color="white", size=3.5,aes(fontface = "bold.italic"))+
+  theme_bw(base_size = 15)+ 
+  theme(axis.text =black.bold.italic.textsmall)+
+  theme(title = black.bold.italic.text, axis.title = black.bold.italic.text,legend.text=element_text(size=10))+
+    theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        axis.text = black.bold.italic.textsmall,
+        title = black.bold.italic.textsmall, 
+        axis.title = black.bold.italic.text)
+ggsave("/Users/yoonjung/FSU/2019/Research/draft/WBGTproject/plots/coefficient.png", plot = last_plot(), dpi = 150, width = 30, height = 35, units = "cm")
+
+subdf2 <- subdf[c(21:nrow(subdf)),]
+
+ggplot(subdf2,aes(term, as.numeric(estimate))) + 
+  geom_point(stat='identity', size=10, position=position_dodge(width=2))+
+  geom_hline(yintercept=0, linetype="dashed", color = "gray")+
+  geom_errorbar(aes(ymin = as.numeric(conf.low), ymax = as.numeric(conf.high)))+ 
+  xlab("Variables") + 
+  ylab("Coefficient")+
+  scale_x_discrete(limits = rev(levels(as.factor(subdf2$term))))+
+  coord_flip()+
+  geom_text(label = round(as.numeric(subdf2$estimate),2),color="white", size=3.5,aes(fontface = "bold.italic"))+
+  theme_bw(base_size = 15)+ 
+  theme(axis.text =black.bold.italic.textsmall)+
+  theme(title = black.bold.italic.text, axis.title = black.bold.italic.text,legend.text=element_text(size=10))+
+    theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        axis.text = black.bold.italic.textsmall,
+        title = black.bold.italic.textsmall, 
+        axis.title = black.bold.italic.text)
+
+ggsave("/Users/yoonjung/FSU/2019/Research/draft/WBGTproject/plots/coefficient2.png", plot = last_plot(), dpi = 150, width = 30, height = 35, units = "cm")
+```
+
+#error plot
+```{r}
+library(usmap)
+library(ggspatial)
+library(sf)
+library(maptools)
+library(RColorBrewer)
+library(scales)
+
+DFno$error <- DFno$diffab-DFno$estimated_diff
+errordf <-DFno%>%select(c(lon,lat,error, diffab,estimated_diff, ID, Institute))
+errordf$IDcat <- as.character(errordf$ID)
+errordf$Lat <- as.character(errordf$lat)
+errordf$Lon <- as.character(errordf$lon)
+
+Errordf <- errordf %>% 
+  group_by(ID,lon,lat,)%>%
+  dplyr::summarise(mean = mean(error))
+Errordf$mean <- round(Errordf$mean)
+error_sf = st_as_sf(Errordf, coords = c("lon","lat"), crs = 4326)
+
+#write.csv(Errordf, file = "./Errordf_groupby.csv", sep = ",", quote = FALSE, row.names = F)
+
+#error map
+f <- tempfile()
+download.file("http://www2.census.gov/geo/tiger/GENZ2010/gz_2010_us_050_00_20m.zip", destfile = f)
+unzip(f, exdir = ".")
+US_sf <- readShapePoly("gz_2010_us_050_00_20m.shp")
+US_sf <- US_sf[!(US_sf$STATE %in% c("02","15","72")),]
+#US_sf <- as_Spatial(US_sf)
+US_states <- unionSpatialPolygons(US_sf, IDs=US_sf$STATE)
+
+mycolors <- rev(colorRampPalette(brewer.pal(8, "RdYlGn"))(20))[c(1,15,18,20)]
+mycolors<- c('#8c510a','#d8b365','#c7eae5','#5ab4ac','#01665e')
+p1 <-tm_shape(US_states) +
+  tm_borders(lwd=2, col = "gray",alpha=0.5)+
+  #tm_compass(type="4star", position=c("right", "bottom"), show.labels = 3,size = 2.5, fontsize = 0.5,color.dark = "gray60", text.color = "gray60")+
+  #tm_scale_bar(position=c("right", "bottom"), color.dark = "gray60")+
+  tm_shape(error_sf) +
+  tm_dots(size = 0.1, col = "mean", palette = mycolors, title = "Difference",
+    popup.vars = TRUE, breaks=pretty_breaks(n=4)(min(error_sf$mean):max(error_sf$mean)), alpha=0.8)+
+  tm_layout( legend.title.size =1.5,  legend.text.size = 1.2, inner.margins = 0.2, legend.show = TRUE, legend.text.fontface = "bold.italic", fontface = "bold.italic", frame = FALSE)
+p1
+
+tmap_save(p1, "/Users/yoonjung/FSU/2019/Research/draft/WBGTproject/plots/errormap.png", dpi = 150, width =30, height = 20, units = "cm")
+
+
+table(Errordf$mean)
+```
+
+#spline plot
+```{r}
+
+p<- ggplot(data = DF, aes(x=as.numeric(hour), y=diffab)) +
+  geom_smooth(method = lm, formula = y ~ splines::bs(x, 3), color ="black",se = TRUE)+
+  xlab("Time of day") + 
+  ylab('Difference (Simulated WBGT-Observed WBGT(°C))')+
+    theme_bw(base_size = 15)+ 
+  theme(axis.text =black.bold.italic.textsmall)+
+  theme(title = black.bold.italic.text, axis.title = black.bold.italic.text,legend.text=element_text(size=10))+
+    theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        axis.text = black.bold.italic.textsmall,
+        title = black.bold.italic.textsmall, 
+        axis.title = black.bold.italic.text)
+p
+ggsave("/Users/yoonjung/FSU/2019/Research/draft/WBGTproject/plots/timespline.png", plot = p, dpi = 150, width = 15, height = 15, units = "cm")
+
+
+p<- ggplot(data = DF, aes(x=as.numeric(month), y=diffab)) +
+  geom_smooth(method = lm, formula = y ~ splines::bs(x, 3), color ="black",se = TRUE)+
+  xlab("Month of year") + 
+  ylab('Difference (Simulated WBGT-Observed WBGT(°C))')+
+    theme_bw(base_size = 15)+ 
+  theme(axis.text =black.bold.italic.textsmall)+
+  theme(title = black.bold.italic.text, axis.title = black.bold.italic.text,legend.text=element_text(size=10))+
+    theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        axis.text = black.bold.italic.textsmall,
+        title = black.bold.italic.textsmall, 
+        axis.title = black.bold.italic.text)
+p
+ggsave("/Users/yoonjung/FSU/2019/Research/draft/WBGTproject/plots/monthspline.png", plot = p, dpi = 150, width = 15, height = 15, units = "cm")
+```
+
+

@@ -1,0 +1,479 @@
+---
+title: "data visualizing"
+author: "Yoonjung Ahn"
+date: "12/18/2020"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(lme4)
+library(tibble)
+library(AICcmodavg)
+library(weathermetrics)
+library(boot)
+library(ggmap)
+library(urbnmapr)
+theme_set(theme_bw())
+library(RColorBrewer)
+library(gridExtra)
+library(scales)
+library(maptools)
+library(tmap)
+library(sf)
+library(raster)
+#library(ggspatial)
+black.bold.italic.16.text <- element_text(face = "bold.italic", color = "black", size = 16)
+black.bold.italic.text <- element_text(face = "bold.italic", color = "black", size = 16)
+black.bold.italic.textsmall <- element_text(face = "bold.italic", color = "black", size = 13)
+
+setwd('/Users/yoonjung/FSU/2019/Research/Data/SolarRadiationData/observationWBGTdata/stationinfo/')
+```
+
+#merge station info and Data
+```{r}
+
+str_name<-'/Users/yoonjung/FSU/2019/Research/Data/locations/Koppenclimate/Beck_KG_V1_present_0p083.tif' 
+t = readTIFF(str_name, as.is=TRUE)
+
+
+DF <-read.csv('comebineNDFDandObservation.csv')
+unique(DF$Institute)
+str(DF)
+
+st <-read.csv('./alllocwithST_regions_geo.csv')
+st$ID <- seq(1:nrow(st))
+st$ID <- as.character(st$ID)
+st<- dplyr::select(st, -c(X,geometry,distnace.meter.,distnace.km.,koppen))
+
+colnames(st) <-  c("Institute","lat","lon","ridgevally","aspect","elevation","slope","landcover","discat","NAME","STATE","koppenname","koppendiscrip","ID")
+
+landcover <- read.csv('/Users/yoonjung/FSU/2019/Research/Data/locations/Landuse/conus_attributes_16dec2016.csv')
+landcover <- rename(landcover,landcover=CL)
+landcover <- subset(landcover, select = -c(Description) )
+
+#landcover <- read.csv('/Users/yoonjung/FSU/2019/Research/Data/locations/Landuse/conus_attributes_16dec2016.csv')
+#head(landcover)
+#landcover <- rename(landcover,landcover=Value)
+
+st <- merge(st, landcover, by = c("landcover"), by.y = c("landcover"), all.x=TRUE)
+
+#merge Data and station info
+DFmerge <- merge(DF, st, by.x = c("lat","lon","Institute"), by.y = c("lat","lon","Institute"), all.x=TRUE)
+DFmerge <- DFmerge %>% drop_na()
+DFmerge$ndfd_C <-fahrenheit.to.celsius(DFmerge$WBGT_NDFD, round = 2)
+DFmerge$wbgt_C <-fahrenheit.to.celsius(DFmerge$wbgt, round = 2)
+
+DFmerge$aspect <- as.numeric(DFmerge$aspect)
+DFmerge$aspectcat[(0 >DFmerge$aspect)] <- "Flat"
+DFmerge$aspectcat[0 <= DFmerge$aspect & DFmerge$aspect<= 22.5] <- "North"
+DFmerge$aspectcat[22.6 <= DFmerge$aspect & DFmerge$aspect<= 67.5] <- "Northeast"
+DFmerge$aspectcat[DFmerge$aspect>=67.6 & DFmerge$aspect<= 112.5] <- "East"
+DFmerge$aspectcat[(112.6 <= DFmerge$aspect) & (DFmerge$aspect <= 157.5)] <- "Southeast"
+DFmerge$aspectcat[(157.6 <= DFmerge$aspect) & (DFmerge$aspect <= 202.5)] <- "South"
+DFmerge$aspectcat[(202.6 <= DFmerge$aspect) & (DFmerge$aspect <= 247.5)] <- "Southwest"
+DFmerge$aspectcat[(247.6 <= DFmerge$aspect) & (DFmerge$aspect <= 292.5)] <- "West"
+DFmerge$aspectcat[(292.6 <= DFmerge$aspect) & (DFmerge$aspect <= 337.5)] <- "Northwest"
+DFmerge$aspectcat[(337.6 <= DFmerge$aspect) ] <- "North"
+unique(DFmerge$aspectcat)
+
+DFselect <- DFmerge[!(DFmerge$STATE == "CO" & DFmerge$wbgt_C < -20)&!(DFmerge$STATE == "TX" & DFmerge$wbgt_C < -20)&!(DFmerge$STATE == "AL" & DFmerge$wbgt_C < -20)&!(DFmerge$STATE == "MS" & DFmerge$wbgt_C < -20)&!(DFmerge$koppenname == "Cfa" & DFmerge$wbgt_C < -20),] 
+
+DFselect$UTC_Date  <- strftime(as.POSIXct(DFselect$UTC_Datetime, format = "%Y-%m-%d"))
+DFselect$hour <- strftime(DFselect$UTC_Datetime, "%H")
+DFselect$month <- strftime(DFselect$UTC_Datetime, "%m")
+
+DFselect$ridgevallycat <- ifelse(DFselect$ridgevally>=0, 1, 0) #ridge =1, vally=0
+DFselect$ridgevallycat <- as.character(DFselect$ridgevallycat)
+
+DF<- DFselect %>% dplyr::select(ID, lat,lon, Institute, STATE, NVC_CLASS, landcover, aspectcat, ridgevallycat, discat, elevation, koppenname, UTC_Date,ndfd_C,wbgt_C,hour, month)
+
+DF <-subset(DF, ID!= 249) 
+DF<-subset(DF,wbgt_C<55)
+DF<-drop_na()
+
+DF$diff <- DF$ndfd_C - DF$wbgt_C
+DF$diffab <- abs(DF$diff)
+
+DF <- DF[!(DF$hour == "01")&!(DF$hour == "02")&!(DF$hour == "03")&!(DF$hour == "04")&!(DF$hour == "05")&!(DF$hour == "05")&!(DF$hour == "21")&!(DF$hour == "22")&!(DF$hour == "00"),] 
+```
+
+#st
+```{r}
+st <- unique(DF[ , c("lat", "lon","Institute")])
+```
+
+#with T-map
+```{r}
+
+DF <- read.csv('/Users/yoonjung/FSU/2019/Research/Data/SolarRadiationData/observationWBGTdata/stationinfo/quailycontroldata.csv')
+DF$Datetime <- strftime(as.POSIXct(DF$UTC_Datetime, format = "%Y-%m-%d %H:%M:%S"))
+DF$hour <- strftime(DF$Datetime, "%H")
+DF$month <- strftime(DF$Datetime, "%m")
+DF <- drop_na(DF)
+DF$diff <- as.numeric(DF$ndfd_C) - as.numeric(DF$wbgt_C)
+DF$diffab <- abs(DF$diff)
+DF <- DF[!(DF$hour == "01")&!(DF$hour == "02")&!(DF$hour == "03")&!(DF$hour == "04")&!(DF$hour == "05")&!(DF$hour == "05")&!(DF$hour == "21")&!(DF$hour == "22")&!(DF$hour == "00"),] 
+
+f <- tempfile()
+download.file("http://www2.census.gov/geo/tiger/GENZ2010/gz_2010_us_050_00_20m.zip", destfile = f)
+unzip(f, exdir = ".")
+US_sf <- readShapePoly("gz_2010_us_050_00_20m.shp")
+US_sf <- US_sf[!(US_sf$STATE %in% c("02","15","72")),]
+#US_sf <- as_Spatial(US_sf)
+US_states <- unionSpatialPolygons(US_sf, IDs=US_sf$STATE)
+#st_crs(US_states) = 4326
+US_states_sf <- st_as_sf(US_states, coords = c("x", "y"), crs = 4326)
+st_crs(US_states_sf) <- 4326
+
+st<- st %>%
+filter(longitude <= 0 & longitude >=-150)%>%
+  filter(latitude > 20)%>%
+  filter(institute != "")
+
+test <- DF %>%
+  group_by(lat, lon, month)%>%
+  drop_na()%>%
+  summarize(meanwbgt=  mean(wbgt_C), minwbgt=  min(wbgt_C), maxwbgt=  max(wbgt_C), diff=mean(diffab))
+
+mapdata_sf = st_as_sf(test, coords = c("lon","lat"), 
+                 crs = 4326) 
+
+nb.cols=10
+mycolors <- rev(colorRampPalette(brewer.pal(8, "RdGy"))(nb.cols))
+
+p1 <-tm_shape(US_states_sf) +
+  tm_borders(lwd=2, col = "gray", alpha = .5)+
+  #tm_compass(type="4star", position=c("right", "bottom"), show.labels = 3,size = 2.5, fontsize = 0.5,color.dark = "gray60", text.color = "gray60")+
+  #tm_scale_bar(position=c("right", "bottom"), color.dark = "gray60")+
+  tm_shape(mapdata_sf) +
+  tm_dots(size = 0.1, col = "minwbgt", palette = mycolors, title = "Minimum WBGT(°C)",
+    popup.vars = TRUE, breaks=pretty_breaks(n=10)(min(test$meanwbgt):max(test$maxwbgt)), alpha=0.5)+
+  tm_layout(title="(a)", title.size=1, inner.margins = 0.2, legend.show = TRUE, legend.text.fontface = "bold.italic", fontface = "bold.italic", frame = FALSE)#,legend.outside = TRUE)+ legend.text.size=0.7, 
+
+p1
+
+#mycolors <- rev(colorRampPalette(brewer.pal(8, "RdGy"))(nb.cols))[1:7]
+p2 <-tm_shape(US_states) +
+  tm_borders(lwd=2, col = "gray", alpha = .5)+
+  #tm_compass(type="4star", position=c("right", "bottom"), show.labels = 3,size = 2.5, fontsize = 0.5,color.dark = "gray60", text.color = "gray60")+
+  #tm_scale_bar(position=c("right", "bottom"), color.dark = "gray60")+
+  tm_shape(mapdata_sf) +
+  tm_dots(size = 0.1, col = "meanwbgt", palette = mycolors, title = "Average WBGT(°C)",
+    popup.vars = TRUE, breaks=pretty_breaks(n=10)(min(test$meanwbgt):max(test$meanwbgt)), alpha=0.8)+
+  tm_layout(title="(a)", title.size=1,inner.margins = 0.2, legend.show = TRUE, legend.text.fontface = "bold.italic", fontface = "bold.italic", frame = FALSE) #,legend.outside = TRUE)
+p2
+
+#mycolors <- rev(colorRampPalette(brewer.pal(8, "RdGy"))(nb.cols))
+p3 <-tm_shape(US_states) +
+  tm_borders(lwd=2, col = "gray", alpha = .5)+
+  #tm_compass(type="4star", position=c("right", "bottom"), show.labels = 3,size = 2.5, fontsize = 0.5, color.dark = "gray60", text.color = "gray60")+
+  #tm_scale_bar(position=c("right", "bottom"), color.dark = "gray60")+
+  tm_shape(mapdata_sf) +
+  tm_dots(size = 0.1, col = "maxwbgt", palette = mycolors, title = "Maximum WBGT(°C)",
+    popup.vars = TRUE, breaks=pretty_breaks(n=10)(min(test$maxwbgt):max(test$maxwbgt)), alpha=0.8)+
+  tm_layout(title="(b)", title.size=1,inner.margins = 0.2, legend.show = TRUE, legend.text.fontface = "bold.italic", fontface = "bold.italic", frame = FALSE) #,legend.outside = TRUE)
+p3
+
+nb.cols <- 15
+my_colors <- colorRampPalette(brewer.pal(8, "PuBu"))(nb.cols)[5:15]
+
+p4 <-tm_shape(US_states) +
+  tm_borders(lwd=2, col = "gray", alpha = .5)+
+  tm_compass(type="4star", position=c("right", "bottom"), show.labels = 3,size = 2.5, fontsize = 0.5,
+    color.dark = "gray60", text.color = "gray60")+
+  tm_scale_bar(position=c("right", "bottom"), color.dark = "gray60")+
+  tm_shape(mapdata_sf) +
+  tm_dots(size = 0.1, col = "diff", palette = my_colors, title = "Difference WBGT(°C)",
+    popup.vars = TRUE, breaks=pretty_breaks(n=5)(min(test$diff):max(test$diff)),  alpha=0.7)+
+  tm_layout(title="(c)", title.size=1,inner.margins = 0.2, legend.show = TRUE, legend.text.fontface = "bold.italic", fontface = "bold.italic", frame = FALSE) #,legend.outside = TRUE)
+
+p4 
+
+multi1 <- tmap_arrange(p2,p3)
+tmap_save(multi1, "/Users/yoonjung/FSU/2019/Research/draft/WBGTproject/plots/Average_map.png", dpi = 150, width =30, height = 15, units = "cm")
+
+#multi2 <- tmap_arrange(p4)
+tmap_save(p4, "/Users/yoonjung/FSU/2019/Research/draft/WBGTproject/plots/diff_map.pngmaxanddiff_map.png", dpi = 150, width =30, height = 15, units = "cm")
+ 
+
+```
+#koppen map
+```{r}
+st<- st %>%
+filter(longitude <= 0 & longitude >=-150)%>%
+  dplyr::filter(latitude > 20)%>%
+  dplyr::filter(Institute != "")
+st_sf <- st_as_sf(st, coords = c("lon", "lat"))
+
+
+koppen_cat <- read_csv('/Users/yoonjung/FSU/2019/Research/Data/locations/Koppenclimate/legend.csv')
+colnames(koppen_cat) <- c("DN","shortname","name")
+koppen_cat  <- as.data.frame(koppen_cat)
+koppen_cat$koppencat[(koppen_cat$shortname == "Af")|(koppen_cat$shortname == "Am")|(koppen_cat$shortname == "Aw")] <- "Tropical(Af Am Aw)"
+koppen_cat$koppencat[(koppen_cat$shortname == "BSh")|(koppen_cat$shortname == "BSk")] <- "Arid steppe(BSh BSk)"
+koppen_cat$koppencat[(koppen_cat$shortname == "BWh")|(koppen_cat$shortname == "BWk")] <- "Arid desert(BW BWk)"
+koppen_cat$koppencat[(koppen_cat$shortname == "Cfa")|(koppen_cat$shortname == "Cfb")|(koppen_cat$shortname == "Csa")|(koppen_cat$shortname == "Csb")] <- "Temperat(Cfa Cfb Csa Csb)"
+koppen_cat$koppencat[(koppen_cat$shortname == "Dfa")|(koppen_cat$shortname == "Dfb")|(koppen_cat$shortname == "Dfc")] <- "Cold, no dry season(Dfa Dfb Dfc)"
+koppen_cat$koppencat[(koppen_cat$shortname == "Dsa")|(koppen_cat$shortname == "Dsb")|(koppen_cat$shortname == "Dwa")|(koppen_cat$shortname == "Dwb")] <- "Cold dry(Dsa Dsb Dwa Dwb)"
+#koppen_cat$koppencat[is.na(koppen_cat$koppencat)]<- "Missing"
+
+
+finalranef  <- read_table("./FINAL_Randomeffect_confint_final_V2.csv")
+cn = colnames(finalranef)[ncol(finalranef)]
+finalranef  <- finalranef %>%
+    separate_(col = cn, into = strsplit(cn, ',')[[1]],  sep = ',') 
+finalranef <- data.frame(finalranef)
+finalranef$conf.high<- as.numeric(finalranef$conf.high)
+finalranef$conf.low <-as.numeric(finalranef$conf.low)
+finalranef  <- as.data.frame(finalranef)
+finalranef$koppencat[(finalranef$ level == "Af Am Aw")] <- "Tropical(Af Am Aw)"
+finalranef$koppencat[(finalranef$ level == "BSh BSk")] <- "Arid steppe(BSh BSk)"
+finalranef$koppencat[(finalranef$ level == "BW BWk")] <- "Arid desert(BW BWk)"
+finalranef$koppencat[(finalranef$ level == "Cfa Cfb Csa Csb")] <- "Temperate(Cfa Cfb Csa Csb)"
+finalranef$koppencat[(finalranef$ level == "Dfa Dfb Dfc")] <- "Cold, no dry season(Dfa Dfb Dfc)"
+finalranef$koppencat[(finalranef$ level == "Dsa Dsb Dwa Dwb")] <- "Cold dry(Dsa Dsb Dwa Dwb)"
+
+
+merge_df <- merge(koppen_cat,finalranef, by.x="koppencat",by.y="koppencat")
+
+koppen_sf <- st_read("/Users/yoonjung/FSU/2019/Research/Data/locations/Koppenclimate/Koppen_present.shp")
+koppen_sf <- st_transform(koppen_sf, "+proj=longlat +datum=WGS84")
+
+Koppen <- merge(koppen_sf,koppen_cat, by.x="DN",by.y="DN")
+
+#mergedf <- merge(Koppen,merge_df, by = c("koppencat","name","DN","shortname"))
+mergedf <- Koppen %>% full_join(merge_df)
+#by.x="koppencat",by.y="koppencat")
+
+
+mergedf$estimate <- round(as.numeric(mergedf$estimate),2)
+#mergedf$estimatecat <- round(as.numeric(mergedf$estimate,2))
+mergedf$estimatecat <- ifelse(as.numeric(mergedf$estimate)>=0, "Positive", "Negative")
+
+dropdu <-group_by(mergedf@data, name, shortname,DN) %>% slice(1)%>%drop_na
+Koppenran <- merge(koppen_sf,dropdu, by.x="fid",by.y="fid")
+
+nb.cols <- length(rownames(koppencat))
+mycolors <- colorRampPalette(brewer.pal(8, "YlGnBu"))(8)
+#catcolor <- rev(colorRampPalette(brewer.pal(8, "YlOrRd"))(2))
+  
+#koppen map
+koppenmap <- 
+  tm_shape(Koppen)+
+  tm_fill(col="koppencat", palette = mycolors, colorNA = "white",title = "Koppen climate categories")+
+  tm_shape(st_sf)+
+  tm_dots(size = 0.1, col='black',alpha = .5)+
+tm_shape(US_states) +
+  tm_borders(lwd=2, col = "gray30", alpha = .5)+
+  tm_compass(type="4star", position=c("right", "bottom"), show.labels = 3,size = 2.5, fontsize = 0.5,
+    color.dark = "gray60", text.color = "gray60")+
+  tm_scale_bar(position=c("right", "bottom"), color.dark = "gray60")+
+  tm_layout( title.size=1,inner.margins = 0.2, legend.show = TRUE, legend.text.fontface = "bold.italic", fontface = "bold.italic", frame = FALSE,legend.outside = TRUE)
+
+#tmap_save(koppenmap, "/Users/yoonjung/FSU/2019/Research/draft/WBGTproject/plots/koppenmapwithst_v2.png", dpi = 150, width =25, height = 15, units = "cm")
+
+
+mycolors <- colorRampPalette(brewer.pal(6, "YlGnBu"))(6)
+display.brewer.pal(6,"BuGn")
+
+#Map <-tm_shape(mergedf)+
+#  tm_fill(col="estimate", palette = mycolors, colorNA = "white",title = "Random intercept",breaks = pretty_breaks(n=10)(-0.27:2))+ #legend.hist = TRUE,
+#tm_shape(US_states) +
+#  tm_borders(lwd=2, col = "gray30", alpha = .5)+
+#  tm_compass(type="4star", position=c("right", "bottom"), show.labels = 3, size = 3, fontsize = 0.5,
+#    color.dark = "gray60", text.color = "gray60")+
+#  tm_scale_bar(position=c("right", "bottom"), color.dark = "gray60")+
+#   tm_layout(legend.show = TRUE, legend.text.fontface = "bold.italic", fontface = "bold.italic", frame = FALSE) #,legend.outside = TRUE
+#Map
+
+Map <-tm_shape(mergedf)+
+  tm_fill("koppencat", labels = c("Arid desert (1.41, 95% CI: 1.40:1.42)", "Arid steppe (-0.12; 95% CI:-0.12:-0.11)", "Cold dry (-0.34; 95% CI:-0.35:-0.33)","Cold, no dry season (-0.55; 95% CI:-0.56:-0.55)", "Temperate (-0.17, 95% CI: -0.18:-0.17)", "Tropical (-0.21; 95% CI:-0.24:-0.18)"), palette = mycolors, colorNA = "white",title = "Random intercept")+ 
+tm_shape(US_states) +
+  tm_borders(lwd=2, col = "gray30", alpha = .5)+
+  tm_compass(type="4star", position=c("right", "bottom"), show.labels = 3, size = 3, fontsize = 0.5,
+    color.dark = "gray60", text.color = "gray60")+
+  tm_scale_bar(position=c("right", "bottom"), color.dark = "gray60")+
+   tm_layout(legend.show = TRUE, legend.text.fontface = "bold.italic", fontface = "bold.italic", frame = FALSE) #,legend.outside = TRUE+
+
+Map
+
+tmap_save(Map, "/Users/yoonjung/FSU/2019/Research/draft/WBGTproject/plots/randominterceptmap.png", dpi = 150, width =25, height = 15, units = "cm")
+```
+
+
+
+#with GGplot
+```{r}
+test <- DF %>%
+  group_by(lat, lon, month)%>%
+  summarize(meanwbgt=  mean(wbgt_C), minwbgt=  min(wbgt_C), maxwbgt=  max(wbgt_C))
+
+nb.cols <- 12
+mycolors <- rev(colorRampPalette(brewer.pal(8, "RdYlBu"))(nb.cols))
+mid <- mean(test$meanwbgt)
+
+p1 <- ggplot() + 
+  geom_polygon(data = urbnmapr::states, mapping = aes(x = long, y = lat, group = group),
+		           fill = 'white', color = 'grey')+
+  geom_point(data=test, aes(x=lon, y=lat, color = meanwbgt), alpha=0.2, size=4) +
+  scale_size_continuous(range=c(1,5))+
+  #scale_color_gradientn(name="Mean WBGT(°C)",colours = mycolors)+
+  scale_color_gradient2(name="Average WBGT(°C)", low = "#4575B4", mid = "#F8E3A2", high ="#D73027",         
+                          midpoint = mean(test$meanwbgt),
+                          limits = c(-20, max(test$maxwbgt)),
+                          breaks=pretty_breaks(n=10)(min(test$minwbgt):max(test$maxwbgt)))+
+  annotation_scale(location = "br", width_hint = 0.5) +
+    annotation_north_arrow(location = "br", which_north = "true", 
+        pad_x = unit(0.75, "in"), pad_y = unit(0.2, "in"),
+        style = north_arrow_fancy_orienteering) +
+  theme_bw(base_size = 15)+ 
+  theme(axis.text =black.bold.italic.textsmall)+
+  theme(title = black.bold.italic.text, axis.title = black.bold.italic.text,legend.text=element_text(size=10))+
+    theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        axis.text = black.bold.italic.textsmall,
+        title = black.bold.italic.textsmall, 
+        axis.title = black.bold.italic.text)+
+  labs(x = "Latitdue", y = "Longitude",
+              tag = "(b)")
+
+p1
+
+p2 <- ggplot() + 
+  geom_polygon(data = urbnmapr::states, mapping = aes(x = long, y = lat, group = group),
+		           fill = 'white', color = 'grey')+
+  geom_point(data=test, aes(x=lon, y=lat, color = minwbgt), alpha=0.2, size=4) +
+  scale_size_continuous(range=c(1,5))+
+  #scale_color_gradientn(name="Mean WBGT(°C)",colours = mycolors)+
+  scale_color_gradient2(name="Minimum WBGT(°C)",low = "#4575B4", mid = "#F8E3A2", high ="#D73027",
+                          midpoint = mean(test$meanwbgt),
+                          limits = c(-20, max(test$maxwbgt)),
+                          breaks=pretty_breaks(n=10)(min(test$minwbgt):max(test$maxwbgt)))+
+  annotation_scale(location = "br", width_hint = 0.5) +
+    annotation_north_arrow(location = "br", which_north = "true", 
+        pad_x = unit(0.75, "in"), pad_y = unit(0.2, "in"),
+        style = north_arrow_fancy_orienteering) +
+  theme_bw(base_size = 15)+ 
+  theme(axis.text =black.bold.italic.textsmall)+
+  theme(title = black.bold.italic.text, axis.title = black.bold.italic.text,legend.text=element_text(size=10))+
+    theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        axis.text = black.bold.italic.textsmall,
+        title = black.bold.italic.textsmall, 
+        axis.title = black.bold.italic.text)+
+  labs(x = "Latitdue", y = "Longitude",
+              tag = "(a)")
+ 
+p3 <- ggplot() + 
+  geom_polygon(data = urbnmapr::states, mapping = aes(x = long, y = lat, group = group),
+		           fill = 'white', color = 'grey')+
+  geom_point(data=test, aes(x=lon, y=lat, color = maxwbgt), alpha=0.2, size=4) +
+  scale_size_continuous(range=c(1,5))+
+  #scale_color_gradientn(name="Mean WBGT(°C)",colours = mycolors)+
+  scale_color_gradient2(name="Maximum WBGT(°C)", low = "#4575B4", mid = "#F8E3A2", high ="#D73027",         
+                          midpoint = mean(test$meanwbgt),
+                          limits = c(-20, max(test$maxwbgt)),
+                          breaks=pretty_breaks(n=10)(min(test$minwbgt):max(test$maxwbgt)))+
+  annotation_scale(location = "br", width_hint = 0.5) +
+    annotation_north_arrow(location = "br", which_north = "true", 
+        pad_x = unit(0.75, "in"), pad_y = unit(0.2, "in"),
+        style = north_arrow_fancy_orienteering) +
+  theme_bw(base_size = 15)+ 
+  theme(axis.text =black.bold.italic.textsmall)+
+  theme(title = black.bold.italic.text, axis.title = black.bold.italic.text,legend.text=element_text(size=10))+
+    theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        axis.text = black.bold.italic.textsmall,
+        title = black.bold.italic.textsmall, 
+        axis.title = black.bold.italic.text)+
+  labs(x = "Latitdue", y = "Longitude",
+              tag = "(c)")
+
+
+test2 <- DF %>%
+  group_by(lat, lon, month)%>%
+  summarize(diff=  mean(diff))
+
+nb.cols <- 8
+mycolors <- rev(colorRampPalette(brewer.pal(8, "Spectral"))(nb.cols))
+mid <- mean(test$meanwbgt)
+
+p4 <- ggplot() + 
+  geom_polygon(data = urbnmapr::states, mapping = aes(x = long, y = lat, group = group),
+		           fill = 'white', color = 'grey')+
+  geom_point(data=test2, aes(x=lon, y=lat, color = diff), alpha=0.2, size=4) +
+  scale_size_continuous(range=c(1,5))+
+  scale_color_gradientn(name="Difference WBGT(°C)",colours = mycolors,
+                        breaks=pretty_breaks(n=10)(min(test2$diff):max(test2$diff)))+
+  annotation_scale(location = "br", width_hint = 0.5) +
+    annotation_north_arrow(location = "br", which_north = "true", 
+        pad_x = unit(0.75, "in"), pad_y = unit(0.2, "in"),
+        style = north_arrow_fancy_orienteering) +
+  #scale_color_gradient2(name="Max WBGT(°C)", low = "#4575B4", mid = "#F8E3A2", high ="#D73027",            
+                          #midpoint = mean(test$meanwbgt),
+                          #limits = c(-20, max(test$maxwbgt)),
+                          #breaks=pretty_breaks(n=10)(min(test$minwbgt):max(test$maxwbgt)))+
+  theme_bw(base_size = 15)+ 
+  theme(axis.text =black.bold.italic.textsmall)+
+  theme(title = black.bold.italic.text, axis.title = black.bold.italic.text,legend.text=element_text(size=10))+
+    theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        axis.text = black.bold.italic.textsmall,
+        title = black.bold.italic.textsmall, 
+        axis.title = black.bold.italic.text)+
+  labs(x = "Latitdue", y = "Longitude",
+              tag = "(d)")
+
+p4
+grid.arrange(p2,p1, ncol = 1)
+grid.arrange(p3,p4, ncol = 1)
+tmap_arrange
+
+g <- arrangeGrob(p2,p1, ncol = 1) #generates g
+ggsave(file="/Users/yoonjung/FSU/2019/Research/draft/WBGTproject/plots/minandaverage_map.png", g,dpi = 150,width = 35, height = 24, units = "cm")
+ 
+g <- arrangeGrob(p3,p4, ncol = 1)
+ggsave(file="/Users/yoonjung/FSU/2019/Research/draft/WBGTproject/plots/maxanddiff_map.png", g,dpi = 150,width = 30, height = 24, units = "cm")
+```
+
+```{r}
+DF%>%dplyr::filter((Institute =='HPRCC')&(STATE=="MT"))
+DF%>%dplyr::filter(wbgt_C<-19)
+
+test3 <- DF %>%
+  group_by(STATE,month)%>%
+  summarize(meanwbgt=  mean(wbgt_C), minwbgt=  min(wbgt_C), maxwbgt=  max(wbgt_C), diff = mean(diffab))
+
+test3[which(test3$meanwbgt == min(test3$meanwbgt)),]
+test3[which(test3$meanwbgt == max(test3$meanwbgt)),]
+test3[which(test3$maxwbgt == min(test3$maxwbgt)),]
+test3[which(test3$minwbgt == min(test3$minwbgt)),]
+test3[which(test3$diff == max(test3$diff)),]
+
+DF[which(DF$wbgt_C < -19),]
+
+
+write.table(test3, file = "/Users/yoonjung/FSU/2019/Research/draft/WBGTproject/datasummary.csv", sep = ",", quote = FALSE, row.names = F)
+
+
+stkoppen <-DF%>%dplyr::select(c('lat','lon','Institute','STATE','koppenname','koppencat','NVC_CLASS','distcat'))
+STkoppen <- stkoppen[!duplicated(stkoppen), ]
+koppensum <- STkoppen %>%
+  group_by(koppenname, koppencat)%>%
+  summarize(num= n())
+koppensum
+
+landuse <- STkoppen %>%
+  group_by(NVC_CLASS)%>%
+  summarize(num= n())
+landuse
+
+table(STkoppen$distcat)
+19/(603+19)*100
+
+```
+

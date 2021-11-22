@@ -1,0 +1,32 @@
+---
+title: "NDFD and solar data plot"
+author: "Yoonjung Ahn"
+date: "10/4/2020"
+output: html_document
+---
+```{r}
+library(plyr)
+library(dplyr)
+```
+
+```{r}
+setwd('/Users/yoonjung/FSU/2019/Research/Data/SolarRadiationData/')
+```
+
+```{r}
+ndf <- read.csv('NDFD/wbgt_2018-04/wbgt_2018-04-30_2300.csv')
+colnames(ndf)<-c('UTC_Datetime','lat','lon','wbgtNdfd','institute')
+ndf$UTC_Datetime <-  as.POSIXlt(ndf$UTC_Datetime)
+```
+
+```{r}
+obdf <- read.csv('observationWBGTdata/allobservationcombined.csv')
+obdf$UTC_Datetime <-  as.POSIXlt(obdf$UTC_Datetime)
+```
+
+```{r}
+
+mergedf <- inner_join(ndf,obdf,by = c("UTC_Datetime", "lat", "lon", "institute"))
+
+```
+
